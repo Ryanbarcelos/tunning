@@ -1,0 +1,10 @@
+{
+    "executable": "modelo10.exe",
+    "parameters": {
+        "10": {
+            "min": 5,
+            "max": 9,
+            "step": 6
+        }
+    }
+}
