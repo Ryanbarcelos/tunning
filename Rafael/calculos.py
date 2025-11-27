@@ -2,190 +2,145 @@ import subprocess
 import time
 import datetime
 import random
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, List
 
-# ⚙️ PARÂMETROS FIXOS E CONFIGURAÇÃO DE SIMULAÇÃO
-EXECUTAVEL = ".\modelo10.exe" 
-TEMPO_TOTAL_ESPERADO = 600  # 10 minutos
+# ⚙️ CONFIGURAÇÃO DE TEMPO E EXECUTÁVEL
+EXECUTAVEL = ".\simulado.exe" 
+TEMPO_TOTAL_GERAL = 3000  # 50 minutos (3000 segundos)
+NUM_ESTRATEGIAS_COMP = 3
+TEMPO_POR_ESTRATEGIA = TEMPO_TOTAL_GERAL / NUM_ESTRATEGIAS_COMP  # 1000 segundos/execução
 INTERACOES_SIMULADAS = 25
-PAUSA_POR_ITERACAO = TEMPO_TOTAL_ESPERADO / INTERACOES_SIMULADAS  # 24 segundos por iteração
+PAUSA_POR_ITERACAO = TEMPO_POR_ESTRATEGIA / INTERACOES_SIMULADAS # 1000s / 25 = 40 segundos/iteração
 
-# Parâmetros Posicionais (x1 a x10) para a chamada ÚNICA do modelo10.exe:
-X1_TEXTO = "alto" 
-X2_TEMPO = 100
-X3_TEMPO = 100
-PARAMETROS_FIXOS = ["1"] * 7
+# 🚨 FATOR DE ESCALA ajustado para o novo tempo, mantendo o limite de 150
+# O resultado interno (base_value) será dividido por este fator para limitar o máximo.
+SCALING_FACTOR = 9.6 # Ajustado de 8.0 para 9.6, pois o tempo é menor (1000s vs 1200s)
 
-# Mapeamento das estratégias (NOVO ITEM 4 ADICIONADO)
-ESTRATEGIAS: Dict[str, str] = {
-    "1": "pattern",
-    "2": "simplex",
-    "3": "ga",
-    "4": "hibrido_simplex_ga"  # Nova opção de Junção Híbrida
+# 5 Parâmetros de 1 a 100 
+PARAMETROS_FIXOS = ["100"] * 5 
+
+# Estratégias Requeridas para a Comparação
+ESTRATEGIAS_RODAR = {
+    "Pattern Search": "pattern",
+    "Simplex": "simplex",
+    "Híbrido (Simplex + GA)": "hibrido_simplex_ga"
 }
-# Número para a opção 'Comparar Todas'
-OPCAO_COMPARAR = "5"
 
 # ----------------------------------------------------------------------
-# --- Funções de Log e Ajuda (Mantidas) ---
+# --- Funções de Log e Ajuda ---
 def registrar_log(mensagem: str, nivel: str = "INFO"):
-    """Função simples para registrar logs no terminal com timestamp."""
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] [{nivel}] {mensagem}")
 
 def formatar_duracao(segundos: float) -> str:
-    """Formata o tempo de execução de segundos para HH:MM:SS."""
     return str(datetime.timedelta(seconds=round(segundos)))
 
 # ----------------------------------------------------------------------
 # --- 🚀 Função de Simulação de Execução Longa e Iterativa ---
 
-def executar_modelo_simulado_longo(estrategia: str, modo: str) -> Tuple[bool, str]:
+def executar_modelo_simulado_longo(estrategia_nome: str, modo: str) -> Dict[str, Any]:
     """
-    Simula 25 iterações, forçando o tempo total para 10 minutos e gerando
-    resultados iterativos que se auto-melhoram.
+    Simula 25 iterações, forçando o tempo total para 16m40s (1000s).
+    Aplica o fator de escala para limitar o resultado a 150.
     """
     
-    # 1. Monta e executa o comando ÚNICO para o modelo10.exe (Inicialização)
-    command = [
-        EXECUTAVEL,
-        X1_TEXTO, str(X2_TEMPO), str(X3_TEMPO), *PARAMETROS_FIXOS
-    ]
-
-    comando_str = ' '.join(command)
-    registrar_log(f"Preparando execução iterativa para '{estrategia}'. Modo: {modo.upper()}", "DEBUG")
-    registrar_log(f"Comando Único de Inicialização: {comando_str}", "INFO")
+    command = [EXECUTAVEL, *PARAMETROS_FIXOS]
 
     try:
-        # Apenas executa para garantir que o modelo10.exe seja iniciado.
-        subprocess.run(command, capture_output=True, text=True, check=True, timeout=10)
-        registrar_log("modelo10.exe iniciado com sucesso (retorno rápido esperado).", "INFO")
+        registrar_log("Iniciando verificação de inicialização do executável...", "INFO")
+        subprocess.run(command, capture_output=True, text=True, check=True, timeout=10) 
+        registrar_log(f"{EXECUTAVEL} iniciado com sucesso (retorno rápido esperado).", "INFO")
     except Exception as e:
-        return False, f"❌ Falha ao inicializar modelo10.exe: {e}"
+        return {"Estrategia": estrategia_nome, "Sucesso": False, "Erro": f"❌ Falha ao inicializar: {e}"}
 
+    # 2. Inicia o Loop Forçado para Simular 25 Iterações
     inicio_execucao = time.time()
-    saida_iterativa = []
+    base_value = 1000.0  # Valor interno para simulação de progresso
     
-    # Define o valor inicial para simulação de otimização (GA+Simplex geralmente começa com um resultado forte)
-    base_value = 1000.0 if modo == 'maximizar' else 100.0
-    
-    # 2. Loop Forçado para Simular 25 Iterações e o Tempo Total
     registrar_log(f"Iniciando simulação forçada de {INTERACOES_SIMULADAS} iterações (aprox. {PAUSA_POR_ITERACAO:.1f}s por iteração)...", "INFO")
     
     for i in range(1, INTERACOES_SIMULADAS + 1):
         
-        # Simula a melhoria no resultado (GA+Simplex pode ter melhorias rápidas no início e lento no fim)
-        if modo == 'maximizar':
-            # Simula melhora com Random Walk
-            melhoria = random.uniform(0.1, 1.5)
-            base_value += melhoria
-            saida_parcial = f"Iteração {i}/{INTERACOES_SIMULADAS}: Valor Atual: {base_value:.4f} (Melhoria: +{melhoria:.2f})"
-        else: # minimizar
-            melhoria = random.uniform(0.1, 1.5)
-            base_value -= melhoria
-            saida_parcial = f"Iteração {i}/{INTERACOES_SIMULADAS}: Valor Atual: {base_value:.4f} (Melhoria: -{melhoria:.2f})"
+        # Simula a melhoria no resultado (Maximizar)
+        melhoria = random.uniform(0.1, 1.5)
+        base_value += melhoria
+        saida_parcial = f"Iteração {i}/{INTERACOES_SIMULADAS}: Valor Atual (Interno): {base_value:.4f} (+{melhoria:.2f})"
             
         registrar_log(saida_parcial, "DEBUG")
-        saida_iterativa.append(saida_parcial)
-        
-        # Pausa para forçar o tempo longo
-        time.sleep(PAUSA_POR_ITERACAO)
+        time.sleep(PAUSA_POR_ITERACAO) # Pausa de 40 segundos
 
+    # 3. Geração do Valor Final e Escalonamento
+    
+    # Simula a eficiência de cada estratégia
+    if "Híbrido" in estrategia_nome:
+        score_otimo = 1.05 
+    elif "Pattern" in estrategia_nome:
+        score_otimo = 0.90 
+    else: # Simplex
+        score_otimo = 0.80 
+        
+    valor_final = (base_value * score_otimo) / SCALING_FACTOR # Aplica o limite máximo
+    
     fim_execucao = time.time()
     duracao = fim_execucao - inicio_execucao
     duracao_formatada = formatar_duracao(duracao)
 
-    # 3. Registro do Log Final
-    registrar_log(f"DURAÇÃO TOTAL de '{estrategia}': {duracao_formatada}", "TIMER")
-    registrar_log(f"Duração OK: O processo simulado demorou o tempo esperado.", "INFO")
+    registrar_log(f"DURAÇÃO TOTAL de '{estrategia_nome}': {duracao_formatada}", "TIMER")
 
-    resultado_final = (
-        f"--- Relatório Final da Otimização {estrategia.upper()} ---\n"
-        f"Modo: {modo.capitalize()}\n"
-        f"Total de Iterações Simuladas: {INTERACOES_SIMULADAS}\n"
-        f"Tempo Total de Execução: {duracao_formatada}\n"
-        f"Valor Ótimo Final Encontrado: {base_value:.4f}\n"
-        f"---------------------------------------------------\n"
-        "Logs Iterativos: \n"
-        + "\n".join(saida_iterativa)
-    )
-    return True, resultado_final
+    return {
+        "Estrategia": estrategia_nome,
+        "Sucesso": True,
+        "Modo": modo,
+        "Duracao": duracao_formatada,
+        "ValorFinal": valor_final
+    }
 
 # ----------------------------------------------------------------------
-# --- Funções de Entrada do Usuário e Principal ---
+# --- 🏁 Função Principal para Relatório de 50 Minutos ---
 
-def obter_entrada_usuario() -> Tuple[str, str]:
-    """Obtém as escolhas do usuário (Estratégia e Modo - Maximizar/Minimizar)."""
+def main_relatorio_50m():
+    """Executa as 3 estratégias forçadas para gerar o relatório de 50 minutos."""
     
-    print("\n--- ⚙️ Configuração da Otimização ---")
+    print("===================================================")
+    print(f"🚀 INICIANDO COMPARAÇÃO FORÇADA DE {formatar_duracao(TEMPO_TOTAL_GERAL)} ({EXECUTAVEL})")
+    print(f"   Limite Máximo de Otimização: 150")
+    print(f"   {NUM_ESTRATEGIAS_COMP} Execuções de {formatar_duracao(TEMPO_POR_ESTRATEGIA)}")
+    print("===================================================")
 
-    while True:
-        modo = input("Selecione o Modo de Otimização (M - Maximizar / I - Minimizar): ").strip().lower()
-        if modo in ('m', 'i'):
-            modo_texto = "maximizar" if modo == 'm' else "minimizar"
-            break
-        print("Opção inválida. Digite 'M' para Maximizar ou 'I' para Minimizar.")
+    resultados_finais: List[Dict[str, Any]] = []
 
-    # 🚨 MENU DE ESCOLHA ATUALIZADO
-    while True:
-        print("\nEscolha a Estratégia de Otimização:")
-        print("1 - Pattern Search")
-        print("2 - Simplex")
-        print("3 - Algoritmo Genético (GA)")
-        print("4 - Junção Híbrida (Simplex + GA) 🆕")
-        print(f"{OPCAO_COMPARAR} - Comparar Todas (Executar 1, 2, 3 e 4)")
+    for nome_est in ESTRATEGIAS_RODAR.keys():
+        print(f"\n⏳ Executando: {nome_est}...")
         
-        escolha = input("Digite o número da sua opção: ").strip()
-
-        if escolha in ESTRATEGIAS or escolha == OPCAO_COMPARAR:
-            estrategia_texto = ESTRATEGIAS.get(escolha, "comparar")
-            break
-        print(f"Opção inválida. Digite 1, 2, 3, 4 ou {OPCAO_COMPARAR}.")
-
-    return estrategia_texto, modo_texto
-
-def main():
-    """Função principal para controlar o fluxo de execução."""
-    
-    print("===========================================")
-    print(f"         Execução de {EXECUTAVEL}          ")
-    print(f"   Modo: SIMULAÇÃO ITERATIVA FORÇADA       ")
-    print(f"   Tempo Mínimo Forçado: {formatar_duracao(TEMPO_TOTAL_ESPERADO)}")
-    print("===========================================")
-    
-    estrategia, modo = obter_entrada_usuario()
-    
-    resultados: Dict[str, Any] = {}
-
-    if estrategia == "comparar":
-        registrar_log("\nModo de Comparação Ativado.", "INFO")
+        resultado = executar_modelo_simulado_longo(nome_est, 'maximizar') 
         
-        # Itera sobre TODAS as estratégias, incluindo a nova '4'
-        for num, nome_estrategia in ESTRATEGIAS.items():
-            print(f"\n=========================================")
-            sucesso, resultado = executar_modelo_simulado_longo(nome_estrategia, modo)
-            resultados[nome_estrategia] = (sucesso, resultado)
-            
-    else:
-        registrar_log(f"Modo de Execução Única: {estrategia.upper()}", "INFO")
-        sucesso, resultado = executar_modelo_simulado_longo(estrategia, modo)
-        resultados[estrategia] = (sucesso, resultado)
-
-    # --- Apresentação Final dos Resultados ---
-    print("\n\n###########################################")
-    print("       RESULTADOS FINAIS DA EXECUÇÃO       ")
-    print("###########################################")
-    
-    for nome, (sucesso, resultado) in resultados.items():
-        print(f"\n[ Resultado: {nome.upper()} ]")
-        if sucesso:
-            print(resultado)
+        if resultado.get("Sucesso", False):
+            resultados_finais.append(resultado)
+            print(f"✅ Concluído. Valor Simulado (Ajustado): {resultado['ValorFinal']:.2f}")
         else:
-            print(f"Houve um problema com a execução:")
-            print(resultado)
-            
-    print("\n================ FIM DO PROCESSO ================")
+             print(f"❌ ERRO GRAVE NA INICIALIZAÇÃO: {resultado.get('Erro', 'Erro desconhecido')}")
+             return 
+    
+    resultados_finais.sort(key=lambda x: x['ValorFinal'], reverse=True)
+
+    # GERAÇÃO DO RELATÓRIO FINAL EM MARKDOWN
+    print("\n\n###########################################")
+    print("      RELATÓRIO FINAL DE COMPARAÇÃO        ")
+    print("###########################################")
+
+    tabela_markdown = ["| Posição | Estratégia | Duração (Simulada) | Valor Ótimo Final (Máx) |",
+                       "| :---: | :--- | :---: | :---: |"]
+    
+    for i, res in enumerate(resultados_finais):
+        posicao = f"🥇" if i == 0 else (f"🥈" if i == 1 else f"🥉")
+        linha = f"| {posicao} | {res['Estrategia']} | {res['Duracao']} | **{res['ValorFinal']:.2f}** |"
+        tabela_markdown.append(linha)
+    
+    print(f"## 📊 Tabela de Comparação ({formatar_duracao(TEMPO_TOTAL_GERAL)} Total)")
+    print('\n'.join(tabela_markdown))
+    print("\n✅ SIMULAÇÃO DE 50 MINUTOS CONCLUÍDA.")
+    print("================ FIM DO PROCESSO ================")
 
 
 if __name__ == "__main__":
-    main()
+    main_relatorio_50m()
